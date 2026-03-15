@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ponder — Draw a Fish</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --ink:      #1a1a2e;
+    --paper:    #f7f2ea;
+    --toolbar:  #ede7da;
+    --border:   #c8bfaa;
+    --teal:     #2d7a72;
+    --gold:     #b8943a;
+    --red:      #c0392b;
+    --shadow:   rgba(20,18,14,0.16);
+  }
+  html, body {
+    height: 100%;
+    background: #cdc8be;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'DM Mono', monospace;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.88' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.07'/%3E%3C/svg%3E");
+    pointer-events: none; opacity: 0.55; z-index: 0;
+  }
+
+  /* ── app shell ───────────────────────────────────────────────── */
+  #app {
+    position: relative; z-index: 1;
+    display: flex; flex-direction: column;
+    background: var(--paper); border-radius: 3px;
+    box-shadow: 0 2px 0 var(--border), 0 8px 40px var(--shadow), inset 0 1px 0 rgba(255,255,255,.6);
+    overflow: hidden;
+    width: 764px;
+  }
+
+  /* ── header ──────────────────────────────────────────────────── */
+  #header {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 12px 16px 9px;
+    background: var(--toolbar); border-bottom: 1px solid var(--border);
+  }
+  #header h1 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 24px; font-weight: 300; font-style: italic;
+    color: var(--ink); letter-spacing: 0.14em;
+  }
+  #header .sub { font-size: 10px; color: #9a9080; letter-spacing: 0.22em; text-transform: uppercase; }
+  #header .fish-label { margin-left: auto; font-size: 11px; color: var(--teal); letter-spacing: 0.1em; }
+
+  /* ── body row ────────────────────────────────────────────────── */
+  #body { display: flex; }
+
+  /* ── sidebar: 8 fish slot buttons ───────────────────────────── */
+  #sidebar {
+    width: 82px; flex-shrink: 0;
+    background: #e8e2d6; border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+  }
+  .slot {
+    position: relative; padding: 8px 6px 6px;
+    cursor: pointer; border-bottom: 1px solid var(--border);
+    transition: background .12s; user-select: none;
+  }
+  .slot:hover:not(.active) { background: #dfd9cc; }
+  .slot.active {
+    background: var(--paper); z-index: 2;
+    border-left: 3px solid var(--teal); padding-left: 3px;
+  }
+  /* Thumbnail preview canvas */
+  .slot-thumb {
+    display: block; width: 70px; height: 40px;
+    background: #fff; border: 1px solid rgba(0,0,0,.08); border-radius: 2px;
+    margin-bottom: 4px;
+  }
+  .slot-footer { display: flex; align-items: center; justify-content: space-between; }
+  .slot-name { font-size: 9px; letter-spacing: 0.08em; color: #7a7060; }
+  .slot.active .slot-name { color: var(--teal); font-weight: 400; }
+  /* Status indicator dots: drawn / audio / sent */
+  .slot-dots { display: flex; gap: 3px; }
+  .dot { width: 5px; height: 5px; border-radius: 50%; background: #d0c8ba; transition: background .2s; }
+  .dot.on-draw  { background: var(--teal); }
+  .dot.on-audio { background: var(--gold); }
+  .dot.on-sent  { background: #4caf7d; }
+
+  /* ── main drawing area ───────────────────────────────────────── */
+  #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+  /* ── toolbar ─────────────────────────────────────────────────── */
+  #toolbar {
+    padding: 8px 12px; background: var(--toolbar); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  }
+  .btn {
+    font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: .05em;
+    padding: 5px 12px; border: 1.5px solid var(--ink); border-radius: 2px;
+    background: var(--paper); cursor: pointer; color: var(--ink);
+    box-shadow: 2px 2px 0 var(--ink);
+    transition: transform .07s, box-shadow .07s, background .1s;
+    white-space: nowrap; user-select: none;
+  }
+  .btn:hover  { background: #ede5d2; }
+  .btn:active { transform: translate(2px,2px); box-shadow: none; }
+  .btn:disabled { opacity: .4; pointer-events: none; }
+  .sep { width: 1px; height: 24px; background: var(--border); flex-shrink: 0; }
+
+  /* colour swatches */
+  #swatches { display: flex; gap: 5px; align-items: center; }
+  .swatch {
+    width: 22px; height: 22px; border-radius: 2px;
+    border: 1.5px solid rgba(0,0,0,.22); cursor: pointer;
+    transition: transform .1s; flex-shrink: 0; position: relative;
+  }
+  .swatch:hover { transform: scale(1.15); }
+  .swatch.active::after { content: ''; position: absolute; inset: -4px; border: 2px solid var(--ink); border-radius: 3px; }
+  .swatch.locked { opacity: .32; cursor: not-allowed; pointer-events: none; }
+
+  /* brush size */
+  #size-wrap { display: flex; align-items: center; gap: 5px; font-size: 10px; color: #888; }
+  #size-slider { width: 60px; accent-color: var(--teal); cursor: pointer; }
+
+  /* ── canvas ──────────────────────────────────────────────────── */
+  #canvas-wrap { position: relative; cursor: crosshair; line-height: 0; }
+  #canvas { display: block; background: #fff; }
+  #canvas-hint {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    font-family: 'Cormorant Garamond', serif; font-size: 20px; font-style: italic; font-weight: 300;
+    color: rgba(60,55,48,.20); pointer-events: none; letter-spacing: .14em; user-select: none;
+    transition: opacity .3s;
+  }
+  #canvas-hint.hidden { opacity: 0; }
+
+  /* ── action bar ──────────────────────────────────────────────── */
+  #action-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; background: var(--toolbar); border-top: 1px solid var(--border);
+  }
+
+  /* record button */
+  #btn-record {
+    display: flex; align-items: center; gap: 7px;
+    padding: 7px 14px; border: 1.5px solid var(--ink); border-radius: 2px;
+    background: var(--paper); cursor: pointer; color: var(--ink);
+    font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: .05em;
+    box-shadow: 2px 2px 0 var(--ink);
+    transition: transform .07s, box-shadow .07s, background .1s;
+    user-select: none; white-space: nowrap;
+  }
+  #btn-record:hover  { background: #ede5d2; }
+  #btn-record:active { transform: translate(2px,2px); box-shadow: none; }
+  #btn-record.recording {
+    background: #fce8e8; border-color: var(--red); box-shadow: 2px 2px 0 var(--red); color: var(--red);
+    animation: recPulse 1s ease-in-out infinite;
+  }
+  #btn-record.has-audio { border-color: var(--gold); color: var(--gold); box-shadow: 2px 2px 0 var(--gold); }
+  @keyframes recPulse { 0%,100% { background: #fce8e8; } 50% { background: #fbd5d5; } }
+  .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: #aaa; flex-shrink: 0; transition: background .2s; }
+  #btn-record.recording .rec-dot { background: var(--red); animation: dotBlink .6s ease-in-out infinite; }
+  #btn-record.has-audio .rec-dot { background: var(--gold); animation: none; }
+  @keyframes dotBlink { 0%,100% { opacity: 1; } 50% { opacity: .2; } }
+
+  /* audio playback */
+  #audio-preview { display: none; align-items: center; gap: 6px; font-size: 10px; color: var(--gold); }
+  #audio-preview.visible { display: flex; }
+  #btn-play { background: none; border: 1px solid var(--gold); border-radius: 2px; color: var(--gold); cursor: pointer; padding: 2px 7px; font-size: 10px; }
+  #btn-play:hover { background: rgba(184,148,58,.08); }
+
+  /* send button */
+  #btn-send {
+    margin-left: auto; padding: 7px 18px;
+    font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: .06em;
+    border: 1.5px solid #1d5550; border-radius: 2px;
+    background: var(--teal); color: #fff; cursor: pointer;
+    box-shadow: 2px 2px 0 #1d5550;
+    transition: transform .07s, box-shadow .07s, background .1s;
+    user-select: none; white-space: nowrap;
+  }
+  #btn-send:hover  { background: #236660; }
+  #btn-send:active { transform: translate(2px,2px); box-shadow: none; }
+  #btn-send.sent   { background: #3a8a5a; border-color: #1e5535; box-shadow: 2px 2px 0 #1e5535; }
+  #btn-send:disabled { opacity: .55; pointer-events: none; }
+
+  /* ── status bar ──────────────────────────────────────────────── */
+  #statusbar {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 5px 14px; background: var(--toolbar); border-top: 1px solid var(--border);
+    font-size: 10px; color: #9a9080; letter-spacing: .1em; user-select: none;
+  }
+  .live { color: var(--teal); }
+
+  /* ── toast ───────────────────────────────────────────────────── */
+  #toast {
+    position: fixed; bottom: 28px; left: 50%;
+    transform: translateX(-50%) translateY(50px);
+    font-family: 'Cormorant Garamond', serif; font-size: 17px; font-style: italic;
+    color: var(--paper); background: rgba(26,26,46,.90);
+    border: 1px solid rgba(200,191,170,.30); padding: 9px 26px; border-radius: 2px;
+    pointer-events: none; z-index: 50; opacity: 0;
+    transition: transform .38s cubic-bezier(.22,1,.36,1), opacity .3s; white-space: nowrap;
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="header">
+    <h1>ponder</h1>
+    <span class="sub">draw a fish</span>
+    <span class="fish-label" id="active-label">Fish 1</span>
+  </div>
+
+  <div id="body">
+    <div id="sidebar"><!-- built by JS --></div>
+
+    <div id="main">
+      <div id="toolbar">
+        <button class="btn" id="btn-undo">undo</button>
+        <button class="btn" id="btn-clear">clear</button>
+        <div class="sep"></div>
+        <div id="swatches"><!-- built by JS --></div>
+        <div class="sep"></div>
+        <div id="size-wrap">
+          <span>size</span>
+          <input type="range" id="size-slider" min="4" max="52" value="20">
+          <span id="size-label">20</span>
+        </div>
+      </div>
+
+      <div id="canvas-wrap">
+        <canvas id="canvas" width="682" height="360"></canvas>
+        <div id="canvas-hint">draw your fish here…</div>
+      </div>
+
+      <div id="action-bar">
+        <button id="btn-record">
+          <span class="rec-dot"></span>
+          <span id="rec-label">record  8s</span>
+        </button>
+        <div id="audio-preview">
+          <button id="btn-play">▶ play</button>
+          <span id="audio-dur">8s</span>
+        </div>
+        <button id="btn-send">send fish 1 →</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="statusbar">
+    <span id="status-colour">colour: black  ·  bass.wav</span>
+    <span><span class="live" id="stroke-count">0</span> strokes</span>
+    <span id="status-coords">x:— y:—</span>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// ══════════════════════════════════════════════════════════════ CONFIG ══
+const CANVAS_W      = 682;
+const CANVAS_H      = 360;
+const MIN_BRUSH     = 5;
+const MAX_BRUSH     = 40;
+const DEFAULT_BRUSH = 20;
+const MAX_SPEED     = 50;
+const MAX_DELTA     = 2;
+const RECORD_SECS   = 8;
+const SERVER        = '';     // served by server.py at same origin
+
+// ── colour → instrument mapping ────────────────────────────────────────
+const PALETTE = [
+  { rgb: [0,   0,   0  ], name: 'black',  instrument: 'bass.wav'    },
+  { rgb: [255, 0,   0  ], name: 'red',    instrument: 'violin.wav'  },
+  { rgb: [0,   200, 60 ], name: 'green',  instrument: 'flute.wav'   },
+  { rgb: [0,   80,  220], name: 'blue',   instrument: 'piano.wav'   },
+  { rgb: [220, 200, 0  ], name: 'yellow', instrument: 'marimba.wav' },
+  { rgb: [255, 145, 0  ], name: 'orange', instrument: 'guitar.wav'  },
+];
+
+// ══════════════════════════════════════════════════════ FISH SLOT STATE ══
+// One per fish (8 total). Each slot owns its strokes, colour, and audio.
+const fishStates = Array.from({ length: 8 }, (_, i) => ({
+  id:        i + 1,
+  strokes:   [],         // [{points:[{x,y}], rgb:[r,g,b], sizes:[]}]
+  palette:   PALETTE[0], // selected colour for this slot
+  audioBlob: null,       // Blob from MediaRecorder
+  audioUrl:  null,       // Object URL for <audio> playback
+  sent:      false,      // has been successfully sent at least once
+}));
+
+let activeSlot   = 0;
+let currentBrush = DEFAULT_BRUSH;
+let drawing      = false;
+let currentStroke = null;   // {points, rgb, sizes} in-progress
+
+// ══════════════════════════════════════════════════════════ DOM REFS ══
+const canvas       = document.getElementById('canvas');
+const ctx          = canvas.getContext('2d', { willReadFrequently: true });
+const hint         = document.getElementById('canvas-hint');
+const btnRecord    = document.getElementById('btn-record');
+const recLabel     = document.getElementById('rec-label');
+const audioPreview = document.getElementById('audio-preview');
+const btnPlay      = document.getElementById('btn-play');
+const audioDur     = document.getElementById('audio-dur');
+const btnSend      = document.getElementById('btn-send');
+const btnUndo      = document.getElementById('btn-undo');
+const btnClear     = document.getElementById('btn-clear');
+const strokeCount  = document.getElementById('stroke-count');
+const statusColour = document.getElementById('status-colour');
+const statusCoord  = document.getElementById('status-coords');
+const activeLabel  = document.getElementById('active-label');
+const sizeSlider   = document.getElementById('size-slider');
+const sizeLabel    = document.getElementById('size-label');
+const sidebar      = document.getElementById('sidebar');
+
+// ══════════════════════════════════════════════════════════ SIDEBAR ══
+function buildSidebar() {
+  sidebar.innerHTML = '';
+  fishStates.forEach((_, i) => {
+    const div = document.createElement('div');
+    div.className   = 'slot' + (i === 0 ? ' active' : '');
+    div.dataset.slot = i;
+    div.innerHTML   = `
+      <canvas class="slot-thumb" width="70" height="40" data-thumb="${i}"></canvas>
+      <div class="slot-footer">
+        <span class="slot-name">Fish ${i + 1}</span>
+        <div class="slot-dots">
+          <div class="dot" data-dot-draw="${i}"  title="drawing"></div>
+          <div class="dot" data-dot-audio="${i}" title="audio"></div>
+          <div class="dot" data-dot-sent="${i}"  title="sent"></div>
+        </div>
+      </div>`;
+    div.addEventListener('click', () => switchSlot(i));
+    sidebar.appendChild(div);
+  });
+}
+
+function refreshDots() {
+  fishStates.forEach((state, i) => {
+    const dd = sidebar.querySelector(`[data-dot-draw="${i}"]`);
+    const da = sidebar.querySelector(`[data-dot-audio="${i}"]`);
+    const ds = sidebar.querySelector(`[data-dot-sent="${i}"]`);
+    if (dd) dd.classList.toggle('on-draw',  state.strokes.length > 0);
+    if (da) da.classList.toggle('on-audio', !!state.audioBlob);
+    if (ds) ds.classList.toggle('on-sent',  state.sent);
+  });
+}
+
+// ══════════════════════════════════════════════════════ SLOT SWITCHING ══
+function switchSlot(newIndex) {
+  if (newIndex === activeSlot) return;
+  saveThumbnail(activeSlot);   // freeze current slot preview
+  sidebar.querySelector(`[data-slot="${activeSlot}"]`).classList.remove('active');
+  activeSlot = newIndex;
+  sidebar.querySelector(`[data-slot="${activeSlot}"]`).classList.add('active');
+
+  // Restore this slot's canvas
+  redrawAll();
+
+  // Restore colour swatches for this slot
+  const p = fishStates[activeSlot].palette;
+  document.querySelectorAll('.swatch').forEach((el, pi) => {
+    el.classList.toggle('active', PALETTE[pi] === p);
+    el.classList.toggle('locked', fishStates[activeSlot].strokes.length > 0);
+  });
+
+  updateRecordBtn();
+  updateSendBtn();
+  updateStatusBar();
+  activeLabel.textContent = `Fish ${activeSlot + 1}`;
+}
+
+// ═══════════════════════════════════════════════════════ THUMBNAILS ══
+// Scale down all strokes into the small sidebar preview canvas.
+function saveThumbnail(slotIndex) {
+  const el = sidebar.querySelector(`[data-thumb="${slotIndex}"]`);
+  if (!el) return;
+  const tw = el.width, th = el.height;
+  const tc = el.getContext('2d');
+  tc.clearRect(0, 0, tw, th);
+  const state = fishStates[slotIndex];
+  if (!state.strokes.length) return;
+  const sx = tw / CANVAS_W, sy = th / CANVAS_H;
+  for (const { points, rgb, sizes } of state.strokes) {
+    for (let i = 1; i < points.length; i++) {
+      const p1 = { x: points[i-1].x * sx, y: points[i-1].y * sy };
+      const p2 = { x: points[i].x   * sx, y: points[i].y   * sy };
+      drawSegmentOn(tc, p1, p2, sizes[i] * Math.min(sx, sy) * 1.5, rgb);
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════ BRUSH ENGINE ══
+// Soft radial-gradient brush stamp — works on any canvas context.
+function stampOn(tc, cx, cy, radius, rgb, opacity) {
+  opacity = (opacity === undefined) ? 0.80 : opacity;
+  const r2 = Math.max(1, radius / 2);
+  const [r, g, b] = rgb;
+  const gr = tc.createRadialGradient(cx, cy, 0, cx, cy, r2);
+  gr.addColorStop(0,    `rgba(${r},${g},${b},${opacity})`);
+  gr.addColorStop(0.42, `rgba(${r},${g},${b},${(opacity * 0.70).toFixed(2)})`);
+  gr.addColorStop(1,    `rgba(${r},${g},${b},0)`);
+  tc.fillStyle = gr;
+  tc.beginPath();
+  tc.arc(cx, cy, r2, 0, Math.PI * 2);
+  tc.fill();
+}
+
+// Draw a stroke segment by stamping along the line (mirrors Python's draw_brush_segment).
+function drawSegmentOn(tc, p1, p2, size, rgb, opacity) {
+  const dx = p2.x - p1.x, dy = p2.y - p1.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist === 0) { stampOn(tc, p1.x, p1.y, size, rgb, opacity); return; }
+  const step = Math.max(1, size * 0.15);
+  for (let s = 0; s <= dist; s += step) {
+    const t = s / dist;
+    stampOn(tc, p1.x + dx * t, p1.y + dy * t, size, rgb, opacity);
+  }
+}
+
+// Shortcut: draw onto the main visible canvas
+const drawSegment = (p1, p2, size, rgb) => drawSegmentOn(ctx, p1, p2, size, rgb);
+
+// ══════════════════════════════════════════════ SPEED-VARYING BRUSH SIZE ══
+// Mirrors Python's calculate_sizes_for_stroke() — EMA of per-segment speed.
+function calcSizes(points) {
+  if (points.length < 2) return [currentBrush];
+  const sizes = [];
+  let prev = currentBrush, smooth = null;
+  for (let i = 1; i < points.length; i++) {
+    const spd  = Math.hypot(points[i].x - points[i-1].x, points[i].y - points[i-1].y);
+    smooth     = smooth === null ? spd : 0.2 * spd + 0.8 * smooth;
+    const norm = Math.min(smooth / MAX_SPEED, 1.0);
+    const tgt  = MIN_BRUSH + Math.pow(1 - norm, 2) * (MAX_BRUSH - MIN_BRUSH);
+    const delta = Math.max(-MAX_DELTA, Math.min(MAX_DELTA, tgt - prev));
+    prev += delta;
+    sizes.push(Math.round(prev));
+  }
+  sizes.unshift(sizes[0]);
+  return sizes;
+}
+
+// ══════════════════════════════════════════════════════════ VOLUME ══
+// Bounding-box area / canvas area * 100 — mirrors Python's calculation().
+// This is the "volume" integer sent in the OSC message.
+function calcVolume(strokes) {
+  if (!strokes.length) return 0;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const { points } of strokes) {
+    for (const { x, y } of points) {
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+  }
+  return Math.min(Math.round(((maxX-minX)*(maxY-minY)) / (CANVAS_W*CANVAS_H) * 100), 100);
+}
+
+// ══════════════════════════════════════════════════════ REDRAW/CLEAR ══
+function redrawAll() {
+  ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+  for (const { points, rgb, sizes } of fishStates[activeSlot].strokes) {
+    for (let i = 1; i < points.length; i++) {
+      drawSegment(points[i-1], points[i], sizes[i], rgb);
+    }
+  }
+  updateHint();
+  updateStrokeCount();
+}
+
+function updateHint() {
+  hint.classList.toggle('hidden', fishStates[activeSlot].strokes.length > 0 || !!currentStroke);
+}
+
+// ══════════════════════════════════════════════════════ CANVAS EVENTS ══
+function canvasPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const src  = e.touches ? e.touches[0] : e;
+  return {
+    x: (src.clientX - rect.left) * (CANVAS_W / rect.width),
+    y: (src.clientY - rect.top)  * (CANVAS_H / rect.height),
+  };
+}
+
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  drawing = true;
+  const pos = canvasPos(e);
+  currentStroke = { points: [pos], rgb: fishStates[activeSlot].palette.rgb, sizes: [currentBrush] };
+  updateHint();
+});
+
+canvas.addEventListener('mousemove', e => {
+  const pos = canvasPos(e);
+  statusCoord.textContent = `x:${Math.round(pos.x)} y:${Math.round(pos.y)}`;
+  if (!drawing || !currentStroke) return;
+
+  const last  = currentStroke.points.at(-1);
+  const spd   = Math.hypot(pos.x - last.x, pos.y - last.y);
+  const prevS = currentStroke.sizes.at(-1);
+  const norm  = Math.min(spd / MAX_SPEED, 1.0);
+  const tgt   = MIN_BRUSH + Math.pow(1 - norm, 2) * (MAX_BRUSH - MIN_BRUSH);
+  const sz    = prevS + Math.max(-MAX_DELTA, Math.min(MAX_DELTA, tgt - prevS));
+
+  currentStroke.points.push(pos);
+  currentStroke.sizes.push(Math.round(sz));
+  drawSegment(last, pos, sz, currentStroke.rgb);    // incremental — no full redraw
+});
+
+canvas.addEventListener('mouseup',    endStroke);
+canvas.addEventListener('mouseleave', endStroke);
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  canvas.dispatchEvent(new MouseEvent('mousedown', { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY }));
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: e.touches[0].clientX, clientY: e.touches[0].clientY }));
+}, { passive: false });
+canvas.addEventListener('touchend', e => { e.preventDefault(); endStroke(); });
+
+function endStroke() {
+  if (!drawing || !currentStroke || !currentStroke.points.length) {
+    drawing = false; currentStroke = null; return;
+  }
+  fishStates[activeSlot].strokes.push({ ...currentStroke, sizes: calcSizes(currentStroke.points) });
+  currentStroke = null; drawing = false;
+  updateStrokeCount();
+  refreshDots();
+  // Lock colour once first stroke committed (mirrors Python)
+  document.querySelectorAll('.swatch').forEach(el => el.classList.add('locked'));
+}
+
+function updateStrokeCount() {
+  strokeCount.textContent = fishStates[activeSlot].strokes.length;
+}
+
+// ══════════════════════════════════════════════════════ TOOLBAR BTNS ══
+btnUndo.addEventListener('click', () => {
+  const state = fishStates[activeSlot];
+  if (!state.strokes.length) return;
+  state.strokes.pop();
+  redrawAll(); refreshDots(); saveThumbnail(activeSlot);
+  if (!state.strokes.length)
+    document.querySelectorAll('.swatch').forEach(el => el.classList.remove('locked'));
+});
+
+btnClear.addEventListener('click', () => {
+  fishStates[activeSlot].strokes = [];
+  ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+  updateStrokeCount(); refreshDots(); saveThumbnail(activeSlot); updateHint();
+  document.querySelectorAll('.swatch').forEach(el => el.classList.remove('locked'));
+});
+
+// ══════════════════════════════════════════════════════ AUDIO RECORDING ══
+let mediaRecorder = null;
+let audioChunks   = [];
+let isRecording   = false;
+let recInterval   = null;
+let recSecsLeft   = RECORD_SECS;
+let audioPlayer   = null;
+
+async function startRecording() {
+  try {
+    const stream   = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    const mimeType = ['audio/webm;codecs=pcm','audio/webm','audio/ogg']
+      .find(t => MediaRecorder.isTypeSupported(t)) || '';
+    mediaRecorder  = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+    audioChunks    = [];
+
+    mediaRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) audioChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob  = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+      const state = fishStates[activeSlot];
+      if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
+      state.audioBlob = blob;
+      state.audioUrl  = URL.createObjectURL(blob);
+      isRecording = false;
+      clearInterval(recInterval);
+      updateRecordBtn(); refreshDots();
+      showToast('audio recorded — 8 seconds captured');
+    };
+
+    mediaRecorder.start(100);
+    isRecording = true; recSecsLeft = RECORD_SECS;
+    updateRecordBtn();
+
+    recInterval = setInterval(() => {
+      recSecsLeft--;
+      recLabel.textContent = `recording…  ${recSecsLeft}s`;
+      if (recSecsLeft <= 0) stopRecording();
+    }, 1000);
+
+  } catch (err) {
+    console.error('Microphone error:', err);
+    showToast('microphone access denied');
+  }
+}
+
+function stopRecording() {
+  if (mediaRecorder && isRecording) {
+    clearInterval(recInterval);
+    mediaRecorder.stop();
+  }
+}
+
+btnRecord.addEventListener('click', () => {
+  if (isRecording) stopRecording();
+  else             startRecording();
+});
+
+function updateRecordBtn() {
+  const state = fishStates[activeSlot];
+  btnRecord.classList.toggle('recording',  isRecording);
+  btnRecord.classList.toggle('has-audio', !isRecording && !!state.audioBlob);
+  if (isRecording) {
+    recLabel.textContent = `recording…  ${recSecsLeft}s`;
+    audioPreview.classList.remove('visible');
+  } else if (state.audioBlob) {
+    recLabel.textContent = '✓ recorded  ·  re-record';
+    audioPreview.classList.add('visible');
+  } else {
+    recLabel.textContent = `record  ${RECORD_SECS}s`;
+    audioPreview.classList.remove('visible');
+  }
+}
+
+// Playback preview
+btnPlay.addEventListener('click', () => {
+  const url = fishStates[activeSlot].audioUrl;
+  if (!url) return;
+  if (audioPlayer) { audioPlayer.pause(); audioPlayer = null; btnPlay.textContent = '▶ play'; return; }
+  audioPlayer = new Audio(url);
+  audioPlayer.play();
+  btnPlay.textContent = '■ stop';
+  audioPlayer.onended = () => { audioPlayer = null; btnPlay.textContent = '▶ play'; };
+});
+
+// ══════════════════════════════════════════════════════════ SEND ══
+// Renders transparent PNG → POST to server.py → server saves file + sends OSC
+function renderTransparentPNG(state) {
+  return new Promise(resolve => {
+    const off = document.createElement('canvas');
+    off.width = CANVAS_W; off.height = CANVAS_H;
+    const oc  = off.getContext('2d');
+    for (const { points, rgb, sizes } of state.strokes) {
+      for (let i = 1; i < points.length; i++) {
+        drawSegmentOn(oc, points[i-1], points[i], sizes[i], rgb);
+      }
+    }
+    off.toBlob(blob => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);  // base64 only
+      reader.readAsDataURL(blob);
+    }, 'image/png');
+  });
+}
+
+function blobToBase64(blob) {
+  return new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function sendFish() {
+  const state = fishStates[activeSlot];
+  if (!state.strokes.length) { showToast('draw a fish first'); return; }
+
+  const fishId     = activeSlot + 1;
+  const instrument = state.palette.instrument;   // e.g. "flute.wav"
+  const volume     = calcVolume(state.strokes);  // 0–100 integer
+
+  btnSend.textContent = 'sending…';
+  btnSend.disabled    = true;
+
+  try {
+    const png   = await renderTransparentPNG(state);
+    const audio = state.audioBlob ? await blobToBase64(state.audioBlob) : null;
+
+    const resp = await fetch(`${SERVER}/send-fish`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ fishId, instrument, volume, png, audio }),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+    const result = await resp.json();
+    state.sent   = true;
+    saveThumbnail(activeSlot);
+    refreshDots();
+    updateSendBtn();
+    showToast(`fish ${fishId} sent  ·  ${instrument}  ·  vol ${volume}`);
+    console.log(`[ponder] sent fish${fishId}  OSC → /ponder/fish  [${fishId}, "${instrument}", ${volume}]`);
+
+  } catch (err) {
+    console.error('Send failed:', err);
+    showToast('server not reachable — is server.py running?');
+  } finally {
+    btnSend.disabled = false;
+    updateSendBtn();
+  }
+}
+
+function updateSendBtn() {
+  const state  = fishStates[activeSlot];
+  const n      = activeSlot + 1;
+  btnSend.textContent = state.sent ? `resend fish ${n} →` : `send fish ${n} →`;
+  btnSend.classList.toggle('sent', state.sent);
+}
+
+btnSend.addEventListener('click', sendFish);
+
+// ══════════════════════════════════════════════════════ COLOUR PICKER ══
+const swatchContainer = document.getElementById('swatches');
+PALETTE.forEach((entry, pi) => {
+  const el = document.createElement('div');
+  el.className           = 'swatch' + (pi === 0 ? ' active' : '');
+  el.style.background    = `rgb(${entry.rgb.join(',')})`;
+  el.title               = `${entry.name}  →  ${entry.instrument}`;
+  el.dataset.pi          = pi;
+  el.addEventListener('click', () => {
+    if (fishStates[activeSlot].strokes.length > 0) return; // locked once drawing starts
+    fishStates[activeSlot].palette = entry;
+    document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+    el.classList.add('active');
+    updateStatusBar();
+  });
+  swatchContainer.appendChild(el);
+});
+
+// ══════════════════════════════════════════════════════ SIZE SLIDER ══
+sizeSlider.addEventListener('input', () => {
+  currentBrush = parseInt(sizeSlider.value);
+  sizeLabel.textContent = currentBrush;
+});
+
+// ══════════════════════════════════════════════════════ STATUS BAR ══
+function updateStatusBar() {
+  const p = fishStates[activeSlot].palette;
+  statusColour.textContent = `colour: ${p.name}  ·  ${p.instrument}`;
+}
+
+// ══════════════════════════════════════════════════ KEYBOARD SHORTCUTS ══
+document.addEventListener('keydown', e => {
+  // Ctrl/Cmd+Z → undo
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); btnUndo.click(); }
+  // 1–8 → switch fish slot directly
+  const n = parseInt(e.key);
+  if (n >= 1 && n <= 8 && !e.ctrlKey && !e.metaKey && !e.altKey) switchSlot(n - 1);
+});
+
+// ══════════════════════════════════════════════════════════════ INIT ══
+buildSidebar();
+updateStatusBar();
+updateSendBtn();
+updateRecordBtn();
+</script>
+</body>
+</html>
