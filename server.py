@@ -44,6 +44,7 @@ ENDPOINTS
 
 import base64
 import os
+import time
 
 from flask import Flask, jsonify, request, send_from_directory
 from pythonosc import udp_client
@@ -59,6 +60,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 app = Flask(__name__, static_folder=STATIC_DIR)
 osc = udp_client.SimpleUDPClient(OSC_IP, OSC_PORT)
+fish_timestamps = {}  # fish_id -> unix timestamp when sent
 
 # ── routes ────────────────────────────────────────────────────────────────────
 
@@ -66,6 +68,12 @@ osc = udp_client.SimpleUDPClient(OSC_IP, OSC_PORT)
 def drawing_app():
     """Serve the drawing app (audiofish.html)."""
     return send_from_directory(STATIC_DIR, "audiofish.html")
+
+
+@app.route("/pond_bg.png")
+def pond_bg():
+    """Serve the watercolour pond background image."""
+    return send_from_directory(STATIC_DIR, "pond_bg.png")
 
 
 @app.route("/pond")
@@ -112,6 +120,7 @@ def send_fish():
 
     # ── send OSC to MaxMSP ──────────────────────────────────────────────────
     # /ponder/fish  <fish_id: int>  <instrument.wav: str>  <volume: int>
+    fish_timestamps[fish_id] = time.time()
     osc.send_message("/ponder/fish", [fish_id, instrument, volume])
     print(f"[osc]    /ponder/fish  {fish_id}  {instrument}  {volume}  → {OSC_IP}:{OSC_PORT}")
 
@@ -135,7 +144,10 @@ def get_fish():
         path = os.path.join(OUTPUT_DIR, f"fish{i}.png")
         if os.path.exists(path):
             with open(path, "rb") as fh:
-                result[str(i)] = base64.b64encode(fh.read()).decode()
+                result[str(i)] = {
+                    "png":       base64.b64encode(fh.read()).decode(),
+                    "timestamp": fish_timestamps.get(i, time.time()),
+                }
     return jsonify(result)
 
 

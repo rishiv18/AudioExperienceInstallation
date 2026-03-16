@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Ponder — Fish Pond</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width:100%; height:100%; background:#0a2a38; overflow:hidden; }
+
+  #pond { display:block; position:fixed; top:0; left:0; width:1600px; height:900px; }
+
+  #waiting {
+    position:fixed; top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    text-align:center; pointer-events:none; z-index:10;
+    animation: breathe 4s ease-in-out infinite;
+  }
+  #waiting.hidden { display:none; }
+  @keyframes breathe {
+    0%,100%{ opacity:.45; transform:translate(-50%,-50%) translateY(0); }
+    50%    { opacity:.85; transform:translate(-50%,-50%) translateY(-8px); }
+  }
+  #waiting h1 {
+    font-family:'Georgia',serif; font-size:52px; font-weight:normal; font-style:italic;
+    color:rgba(220,240,245,.85); letter-spacing:.22em;
+    text-shadow:0 0 80px rgba(100,200,230,.4); margin-bottom:16px;
+  }
+  #waiting p {
+    font-family:monospace; font-size:14px; letter-spacing:.3em;
+    color:rgba(180,220,240,.5); text-transform:uppercase;
+  }
+
+  #counter {
+    position:fixed; bottom:24px; right:28px;
+    font-family:monospace; font-size:11px;
+    color:rgba(180,220,240,.35); letter-spacing:.15em; pointer-events:none; z-index:10;
+  }
+</style>
+</head>
+<body>
+<canvas id="pond" width="1600" height="900"></canvas>
+<div id="waiting"><h1>ponder</h1><p>draw a fish to begin</p></div>
+<div id="counter">0 / 8 fish</div>
+
+<script>
+'use strict';
+
+// ══════════════════════════════════════════════════ CONFIG ══
+const W           = 1600;
+const H           = 900;
+const MAX_FISH    = 8;
+const POLL_MS     = 1500;   // check server every 1.5s
+const RECORD_SECS = 8;      // fish appears 8s after it was sent
+const SERVER      = '';     // same origin — served by server.py
+
+// Oval swimming path (centre + radii)
+const PATH_CX = W * 0.50;
+const PATH_CY = H * 0.50;
+const PATH_RX = W * 0.36;
+const PATH_RY = H * 0.30;
+
+// ══════════════════════════════════════════════════ CANVAS ══
+const canvas = document.getElementById('pond');
+const ctx    = canvas.getContext('2d');
+
+// ══════════════════════════════════════════════════ BACKGROUND ══
+const bgImg  = new Image();
+bgImg.src    = `${SERVER}/pond_bg.png`;
+let bgLoaded = false;
+bgImg.onload = () => { bgLoaded = true; };
+
+// ══════════════════════════════════════════════════ RIPPLES ══
+class Ripple {
+  constructor(x, y) {
+    this.x = x; this.y = y; this.r = 0;
+    this.max = 30 + Math.random() * 75;
+  }
+  get alive() { return this.r < this.max; }
+  update() { this.r += 0.44; }
+  draw(ctx) {
+    const t = this.r / this.max;
+    const a = (1 - t) * 0.40;
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.strokeStyle = `rgba(160,220,235,${a})`;
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    ctx.ellipse(this.x, this.y, this.r, this.r * 0.36, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+const ripples   = [];
+let   ambientT  = 0;
+
+function spawnRipple(x, y) {
+  ripples.push(new Ripple(
+    x !== undefined ? x : 80  + Math.random() * (W - 160),
+    y !== undefined ? y : 80  + Math.random() * (H - 160)
+  ));
+}
+
+// ══════════════════════════════════════════════════ KOI FISH SPRITE ══
+class KoiFish {
+  constructor(fishId, img) {
+    this.id  = fishId;
+    this.img = img;
+
+    // Scale to display size — vary slightly per fish for natural feel
+    const targetW = 150 + (fishId % 4) * 18;
+    this.dw = targetW;
+    this.dh = Math.round(img.naturalHeight * (targetW / img.naturalWidth));
+
+    // Each fish swims on a slightly different oval so they don't stack
+    const jitter = (fishId - 1) * 0.12;    // spreads fish around oval
+    this.cx  = PATH_CX + Math.cos(fishId * 1.3) * 25;
+    this.cy  = PATH_CY + Math.sin(fishId * 0.9) * 18;
+    this.rx  = PATH_RX - fishId * 8;
+    this.ry  = PATH_RY - fishId * 5;
+
+    // Start angle: top-left of oval (5π/4) so fish enters from that corner
+    this.angle = Math.PI * 1.25 + jitter;
+    this.speed = 0.0025 + (fishId % 3) * 0.0006;  // gracefully slow
+
+    // Body undulation
+    this.wobble = 0;
+    this.wobSpd = 0.085 + Math.random() * 0.025;
+    this.wobAmp = 5.5 + Math.random() * 2.5;   // pixel offset per strip
+    this.STRIPS = 16;                            // vertical slice count
+
+    // Fade in from 0→1
+    this.alpha    = 0;
+    this.fadingIn = true;
+
+    // Ripple spawning
+    this.rippleT = 40 + Math.floor(Math.random() * 80);
+
+    this._updatePos();
+  }
+
+  _updatePos() {
+    this.x = this.cx + this.rx * Math.cos(this.angle);
+    this.y = this.cy + this.ry * Math.sin(this.angle);
+  }
+
+  // Direction the fish is heading (tangent to oval)
+  _heading() {
+    const dx = -this.rx * Math.sin(this.angle);
+    const dy =  this.ry * Math.cos(this.angle);
+    return Math.atan2(dy, dx);
+  }
+
+  update() {
+    if (this.fadingIn) {
+      this.alpha += 0.012;
+      if (this.alpha >= 1) { this.alpha = 1; this.fadingIn = false; }
+    }
+    this.angle  += this.speed;
+    this.wobble += this.wobSpd;
+    this._updatePos();
+
+    // Spawn gentle ripples as fish moves
+    this.rippleT--;
+    if (this.rippleT <= 0) {
+      spawnRipple(this.x, this.y);
+      this.rippleT = 55 + Math.floor(Math.random() * 85);
+    }
+  }
+
+  draw(ctx) {
+    if (this.alpha <= 0.01) return;
+
+    const heading = this._heading();
+    const iw  = this.img.naturalWidth;
+    const ih  = this.img.naturalHeight;
+    const dw  = this.dw;
+    const dh  = this.dh;
+
+    ctx.save();
+    ctx.globalAlpha = this.alpha;
+    ctx.translate(this.x, this.y);
+    ctx.rotate(heading);
+
+    // ── Koi undulation: slice fish PNG into vertical strips ─────────────
+    // Each strip is displaced laterally by a sine wave.
+    // Amplitude grows from head (t=0, no movement) to tail (t=1, full waggle).
+    const srcStripW  = iw / this.STRIPS;
+    const destStripW = dw / this.STRIPS;
+
+    for (let s = 0; s < this.STRIPS; s++) {
+      const t   = s / (this.STRIPS - 1);          // 0=head, 1=tail
+      const amp = this.wobAmp * (t * t * 1.2);     // quadratic: tail wags more
+      const yOff = Math.sin(this.wobble - t * Math.PI * 1.8) * amp;
+
+      ctx.drawImage(
+        this.img,
+        s * srcStripW,        0,            srcStripW,   ih,
+        s * destStripW - dw/2, -dh/2 + yOff, destStripW, dh
+      );
+    }
+
+    ctx.restore();
+  }
+}
+
+// ══════════════════════════════════════════════════ FISH MANAGER ══
+const fishSprites = {};    // { fishId: KoiFish }
+const fishPending = {};    // { fishId: { img, showAt } }
+const loadedIds   = new Set();
+
+function loadFishPNG(fishId, base64, showAt) {
+  const img = new Image();
+  img.onload = () => { fishPending[fishId] = { img, showAt }; };
+  img.onerror = () => console.warn(`[pond] could not load fish ${fishId} image`);
+  img.src = 'data:image/png;base64,' + base64;
+}
+
+function checkPending() {
+  const now = Date.now();
+  for (const [id, entry] of Object.entries(fishPending)) {
+    if (now >= entry.showAt) {
+      fishSprites[id] = new KoiFish(parseInt(id), entry.img);
+      delete fishPending[id];
+      updateUI();
+      console.log(`[pond] fish ${id} entered the pond`);
+    }
+  }
+}
+
+function updateUI() {
+  const active  = Object.keys(fishSprites).length;
+  const pending = Object.keys(fishPending).length;
+  document.getElementById('counter').textContent = `${active} / ${MAX_FISH} fish`;
+  const anyFish = active + pending > 0;
+  document.getElementById('waiting').classList.toggle('hidden', anyFish);
+}
+
+// ══════════════════════════════════════════════════ SERVER POLLING ══
+async function pollServer() {
+  try {
+    const resp = await fetch(`${SERVER}/get-fish`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const nowMs = Date.now();
+
+    for (const [idStr, entry] of Object.entries(data)) {
+      const fishId = parseInt(idStr);
+      if (loadedIds.has(fishId)) continue;
+      loadedIds.add(fishId);
+
+      // entry is { png: "base64...", timestamp: 1234567890.123 }
+      const png      = entry.png      || entry;   // backwards compat if plain string
+      const sentMs   = entry.timestamp ? entry.timestamp * 1000 : nowMs;
+      const showAt   = sentMs + RECORD_SECS * 1000;
+      const waitSecs = Math.max(0, (showAt - nowMs) / 1000).toFixed(1);
+
+      console.log(`[pond] fish ${fishId} queued — appears in ${waitSecs}s`);
+      loadFishPNG(fishId, typeof entry === 'string' ? entry : entry.png, Math.max(nowMs, showAt));
+      updateUI();
+    }
+  } catch (e) {
+    // Server unreachable — keep trying
+  }
+}
+
+// ══════════════════════════════════════════════════ MAIN LOOP ══
+let lastAmbientRipple = 0;
+
+function loop(ts) {
+  requestAnimationFrame(loop);
+
+  // ── Background ─────────────────────────────────────────────────────
+  if (bgLoaded) {
+    ctx.drawImage(bgImg, 0, 0, W, H);
+  } else {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#0d2d3e');
+    g.addColorStop(1, '#163e55');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // ── Ambient ripples ──────────────────────────────────────────────────
+  if (ts - lastAmbientRipple > 2200 + Math.random() * 2400) {
+    spawnRipple();
+    lastAmbientRipple = ts;
+  }
+
+  // ── Ripples ──────────────────────────────────────────────────────────
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    ripples[i].update();
+    ripples[i].draw(ctx);
+    if (!ripples[i].alive) ripples.splice(i, 1);
+  }
+
+  // ── Check pending fish ready to enter ───────────────────────────────
+  checkPending();
+
+  // ── Fish ──────────────────────────────────────────────────────────────
+  for (const fish of Object.values(fishSprites)) {
+    fish.update();
+    fish.draw(ctx);
+  }
+}
+
+// ══════════════════════════════════════════════════ KEYBOARD ══
+document.addEventListener('keydown', e => {
+  if (e.key === 'f') document.documentElement.requestFullscreen?.();
+  if (e.key === 'Escape' && document.fullscreenElement) document.exitFullscreen();
+
+  // R — remove last fish (fishing rod)
+  if (e.key === 'r' || e.key === 'R') {
+    const ids = Object.keys(fishSprites);
+    if (ids.length) {
+      const last = ids[ids.length - 1];
+      delete fishSprites[last];
+      loadedIds.delete(parseInt(last));
+      updateUI();
+    }
+  }
+
+  // C — clear all fish
+  if (e.key === 'c' || e.key === 'C') {
+    for (const id of Object.keys(fishSprites)) delete fishSprites[id];
+    for (const id of Object.keys(fishPending)) delete fishPending[id];
+    loadedIds.clear();
+    updateUI();
+  }
+});
+
+// ══════════════════════════════════════════════════ INIT ══
+setInterval(pollServer, POLL_MS);
+pollServer();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
