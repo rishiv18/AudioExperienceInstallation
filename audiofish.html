@@ -142,34 +142,20 @@
     padding: 10px 14px; background: var(--toolbar); border-top: 1px solid var(--border);
   }
 
-  /* record button */
-  #btn-record {
-    display: flex; align-items: center; gap: 7px;
-    padding: 7px 14px; border: 1.5px solid var(--ink); border-radius: 2px;
-    background: var(--paper); cursor: pointer; color: var(--ink);
-    font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: .05em;
-    box-shadow: 2px 2px 0 var(--ink);
-    transition: transform .07s, box-shadow .07s, background .1s;
-    user-select: none; white-space: nowrap;
+  /* timer display */
+  #timer-display {
+    font-family: 'DM Mono', monospace;
+    font-size: 28px;
+    font-weight: 400;
+    color: var(--ink);
+    letter-spacing: 0.1em;
+    min-width: 80px;
+    text-align: center;
+    display: none;
   }
-  #btn-record:hover  { background: #ede5d2; }
-  #btn-record:active { transform: translate(2px,2px); box-shadow: none; }
-  #btn-record.recording {
-    background: #fce8e8; border-color: var(--red); box-shadow: 2px 2px 0 var(--red); color: var(--red);
-    animation: recPulse 1s ease-in-out infinite;
-  }
-  #btn-record.has-audio { border-color: var(--gold); color: var(--gold); box-shadow: 2px 2px 0 var(--gold); }
-  @keyframes recPulse { 0%,100% { background: #fce8e8; } 50% { background: #fbd5d5; } }
-  .rec-dot { width: 8px; height: 8px; border-radius: 50%; background: #aaa; flex-shrink: 0; transition: background .2s; }
-  #btn-record.recording .rec-dot { background: var(--red); animation: dotBlink .6s ease-in-out infinite; }
-  #btn-record.has-audio .rec-dot { background: var(--gold); animation: none; }
-  @keyframes dotBlink { 0%,100% { opacity: 1; } 50% { opacity: .2; } }
-
-  /* audio playback */
-  #audio-preview { display: none; align-items: center; gap: 6px; font-size: 10px; color: var(--gold); }
-  #audio-preview.visible { display: flex; }
-  #btn-play { background: none; border: 1px solid var(--gold); border-radius: 2px; color: var(--gold); cursor: pointer; padding: 2px 7px; font-size: 10px; }
-  #btn-play:hover { background: rgba(184,148,58,.08); }
+  #timer-display.visible { display: block; }
+  #timer-display.countdown { color: var(--red); font-size: 36px; }
+  #timer-display.stopwatch { color: var(--teal); }
 
   /* send button */
   #btn-send {
@@ -228,8 +214,8 @@
         <div class="sep"></div>
         <div id="size-wrap">
           <span>size</span>
-          <input type="range" id="size-slider" min="4" max="52" value="20">
-          <span id="size-label">20</span>
+          <input type="range" id="size-slider" min="2" max="16" value="6">
+          <span id="size-label">6</span>
         </div>
       </div>
 
@@ -239,14 +225,8 @@
       </div>
 
       <div id="action-bar">
-        <button id="btn-record">
-          <span class="rec-dot"></span>
-          <span id="rec-label">record  8s</span>
-        </button>
-        <div id="audio-preview">
-          <button id="btn-play">▶ play</button>
-          <span id="audio-dur">8s</span>
-        </div>
+        <button id="btn-new-pond" class="btn">new pond</button>
+        <div id="timer-display"></div>
         <button id="btn-send">send fish 1 →</button>
       </div>
     </div>
@@ -267,28 +247,29 @@
 // ══════════════════════════════════════════════════════════════ CONFIG ══
 const CANVAS_W      = 682;
 const CANVAS_H      = 360;
-const MIN_BRUSH     = 5;
-const MAX_BRUSH     = 40;
-const DEFAULT_BRUSH = 20;
+const MIN_BRUSH     = 2;
+const MAX_BRUSH     = 16;
+const DEFAULT_BRUSH = 6;
 const MAX_SPEED     = 50;
 const MAX_DELTA     = 2;
-const RECORD_SECS   = 8;
 const SERVER        = '';     // served by server.py at same origin
 
 // ── colour → instrument mapping ────────────────────────────────────────
 const PALETTE = [
-  { rgb: [20,   20,   30  ], name: 'black',  instrument: 'Flute.wav'    },
+  { rgb: [20,   20,   30  ], name: 'black',  instrument: 'DreamVoice.wav'    },
   { rgb: [30, 50,   5  ], name: 'lightgreen',    instrument: 'Glug.wav'  },
-  { rgb: [122, 142, 75 ], name: 'darkgreen',  instrument: 'AWPad.wav'   },
-  { rgb: [120,   80,  150], name: 'purple',   instrument: 'ATRPad.wav'   },
-  { rgb: [200, 100, 0  ], name: 'orange', instrument: 'Marimba.wav'  },
-  { rgb: [152, 67, 64  ], name: 'salmon', instrument: 'Pop.wav'  },
-  { rgb: [155, 182, 183  ], name: 'lightblue', instrument: 'Koto.wav'  },
+  { rgb: [122, 142, 75 ], name: 'darkgreen',  instrument: 'Flute.wav'   },
+  { rgb: [120,   80,  150], name: 'purple',   instrument: 'Heeheewav'   },
+  { rgb: [200, 100, 0  ], name: 'orange', instrument: 'Koto.wav'  },
+  { rgb: [152, 67, 64  ], name: 'salmon', instrument: 'SynthPad3.wav'  },
+  { rgb: [155, 182, 183  ], name: 'lightblue', instrument: 'Marimba.wav'  },
   { rgb: [199, 190, 170  ], name: 'offwhite', instrument: 'Piano.wav'  },
-  { rgb: [94, 103, 98  ], name: 'grey', instrument: 'Strings.wav'  },
-  { rgb: [188, 82, 71  ], name: 'red', instrument: 'Taiko.wav'  },
-  { rgb: [218, 172, 53  ], name: 'gold', instrument: 'WSPad.wav'  },
-  { rgb: [218, 172, 187  ], name: 'rose', instrument: 'Laugh.wav'  },
+  { rgb: [94, 103, 98  ], name: 'grey', instrument: 'Pop.wav'  },
+  { rgb: [188, 82, 71  ], name: 'red', instrument: 'Strings.wav'  },
+  { rgb: [218, 172, 53  ], name: 'gold', instrument: 'SynthPad.wav'  },
+  { rgb: [218, 172, 187  ], name: 'rose', instrument: 'SynthPad2.wav'  },
+  { rgb: [48, 33, 51], name: 'darkpurple', instrument: 'SynthPad4.wav'  },
+  { rgb: [209, 161, 113], name: 'rose', instrument: 'Taiko.wav'  },
 ];
 
 // ══════════════════════════════════════════════════════ FISH SLOT STATE ══
@@ -311,11 +292,6 @@ let currentStroke = null;   // {points, rgb, sizes} in-progress
 const canvas       = document.getElementById('canvas');
 const ctx          = canvas.getContext('2d', { willReadFrequently: true });
 const hint         = document.getElementById('canvas-hint');
-const btnRecord    = document.getElementById('btn-record');
-const recLabel     = document.getElementById('rec-label');
-const audioPreview = document.getElementById('audio-preview');
-const btnPlay      = document.getElementById('btn-play');
-const audioDur     = document.getElementById('audio-dur');
 const btnSend      = document.getElementById('btn-send');
 const btnUndo      = document.getElementById('btn-undo');
 const btnClear     = document.getElementById('btn-clear');
@@ -378,7 +354,6 @@ function switchSlot(newIndex) {
     el.classList.toggle('locked', fishStates[activeSlot].strokes.length > 0);
   });
 
-  updateRecordBtn();
   updateSendBtn();
   updateStatusBar();
   activeLabel.textContent = `Fish ${activeSlot + 1}`;
@@ -566,89 +541,50 @@ btnClear.addEventListener('click', () => {
   document.querySelectorAll('.swatch').forEach(el => el.classList.remove('locked'));
 });
 
-// ══════════════════════════════════════════════════════ AUDIO RECORDING ══
-let mediaRecorder = null;
-let audioChunks   = [];
-let isRecording   = false;
-let recInterval   = null;
-let recSecsLeft   = RECORD_SECS;
-let audioPlayer   = null;
+// ══════════════════════════════════════════════════════ NEW POND ══
+const btnNewPond = document.getElementById('btn-new-pond');
 
-async function startRecording() {
+btnNewPond.addEventListener('click', async () => {
+  if (!confirm('Clear all fish from the pond?')) return;
+
+  btnNewPond.disabled = true;
+  btnNewPond.textContent = 'clearing…';
+
   try {
-    const stream   = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    const mimeType = ['audio/webm;codecs=pcm','audio/webm','audio/ogg']
-      .find(t => MediaRecorder.isTypeSupported(t)) || '';
-    mediaRecorder  = new MediaRecorder(stream, mimeType ? { mimeType } : {});
-    audioChunks    = [];
+    const resp = await fetch(`${SERVER}/clear-pond`, { method: 'POST' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
-    mediaRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) audioChunks.push(e.data); };
-    mediaRecorder.onstop = () => {
-      stream.getTracks().forEach(t => t.stop());
-      const blob  = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
-      const state = fishStates[activeSlot];
-      if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
-      state.audioBlob = blob;
-      state.audioUrl  = URL.createObjectURL(blob);
-      isRecording = false;
-      clearInterval(recInterval);
-      updateRecordBtn(); refreshDots();
-      showToast('audio recorded — 8 seconds captured');
-    };
+    // Clear all fish drawings from all canvases
+    fishStates.forEach((state, i) => {
+      state.strokes = [];
+      state.audioBlob = null;
+      state.audioUrl = null;
+      state.sent = false;
+      // Clear thumbnail canvas
+      const thumb = sidebar.querySelector(`[data-thumb="${i}"]`);
+      if (thumb) {
+        const tc = thumb.getContext('2d');
+        tc.clearRect(0, 0, thumb.width, thumb.height);
+      }
+    });
 
-    mediaRecorder.start(100);
-    isRecording = true; recSecsLeft = RECORD_SECS;
-    updateRecordBtn();
+    // Clear main canvas and reset UI
+    ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+    updateStrokeCount();
+    refreshDots();
+    updateHint();
+    updateSendBtn();
+    document.querySelectorAll('.swatch').forEach(el => el.classList.remove('locked'));
 
-    recInterval = setInterval(() => {
-      recSecsLeft--;
-      recLabel.textContent = `recording…  ${recSecsLeft}s`;
-      if (recSecsLeft <= 0) stopRecording();
-    }, 1000);
-
+    showToast('pond cleared — all fish removed');
+    console.log('[ponder] pond cleared');
   } catch (err) {
-    console.error('Microphone error:', err);
-    showToast('microphone access denied');
+    console.error('Clear pond failed:', err);
+    showToast('server not reachable — is server.py running?');
+  } finally {
+    btnNewPond.disabled = false;
+    btnNewPond.textContent = 'new pond';
   }
-}
-
-function stopRecording() {
-  if (mediaRecorder && isRecording) {
-    clearInterval(recInterval);
-    mediaRecorder.stop();
-  }
-}
-
-btnRecord.addEventListener('click', () => {
-  if (isRecording) stopRecording();
-  else             startRecording();
-});
-
-function updateRecordBtn() {
-  const state = fishStates[activeSlot];
-  btnRecord.classList.toggle('recording',  isRecording);
-  btnRecord.classList.toggle('has-audio', !isRecording && !!state.audioBlob);
-  if (isRecording) {
-    recLabel.textContent = `recording…  ${recSecsLeft}s`;
-    audioPreview.classList.remove('visible');
-  } else if (state.audioBlob) {
-    recLabel.textContent = '✓ recorded  ·  re-record';
-    audioPreview.classList.add('visible');
-  } else {
-    recLabel.textContent = `record  ${RECORD_SECS}s`;
-    audioPreview.classList.remove('visible');
-  }
-}
-
-// Playback preview
-btnPlay.addEventListener('click', () => {
-  const url = fishStates[activeSlot].audioUrl;
-  if (!url) return;
-  if (audioPlayer) { audioPlayer.pause(); audioPlayer = null; btnPlay.textContent = '▶ play'; return; }
-  audioPlayer = new Audio(url);
-  audioPlayer.play();
-  btnPlay.textContent = '■ stop';
-  audioPlayer.onended = () => { audioPlayer = null; btnPlay.textContent = '▶ play'; };
 });
 
 // ══════════════════════════════════════════════════════════ SEND ══
@@ -679,6 +615,44 @@ function blobToBase64(blob) {
   });
 }
 
+const timerDisplay = document.getElementById('timer-display');
+
+// Countdown (4,3,2,1) then stopwatch (0:00 to 0:08)
+function runTimerSequence() {
+  return new Promise(resolve => {
+    let countdown = 4;
+    timerDisplay.classList.add('visible', 'countdown');
+    timerDisplay.classList.remove('stopwatch');
+    timerDisplay.textContent = countdown;
+
+    const countdownInterval = setInterval(() => {
+      countdown--;
+      if (countdown > 0) {
+        timerDisplay.textContent = countdown;
+      } else {
+        clearInterval(countdownInterval);
+        // Switch to stopwatch mode
+        timerDisplay.classList.remove('countdown');
+        timerDisplay.classList.add('stopwatch');
+        let elapsed = 0;
+        timerDisplay.textContent = '0:00';
+
+        const stopwatchInterval = setInterval(() => {
+          elapsed++;
+          const secs = elapsed % 60;
+          timerDisplay.textContent = `0:${secs.toString().padStart(2, '0')}`;
+
+          if (elapsed >= 8) {
+            clearInterval(stopwatchInterval);
+            timerDisplay.classList.remove('visible', 'stopwatch');
+            resolve();
+          }
+        }, 1000);
+      }
+    }, 1000);
+  });
+}
+
 async function sendFish() {
   const state = fishStates[activeSlot];
   if (!state.strokes.length) { showToast('draw a fish first'); return; }
@@ -705,6 +679,10 @@ async function sendFish() {
     state.sent   = true;
     saveThumbnail(activeSlot);
     refreshDots();
+
+    // Run the timer sequence after successful send
+    await runTimerSequence();
+
     updateSendBtn();
     showToast(`fish ${fishId} sent  ·  ${instrument}  ·  vol ${volume}`);
     console.log(`[ponder] sent fish${fishId}  OSC → /ponder/fish  [${fishId}, "${instrument}", ${volume}]`);
@@ -770,7 +748,6 @@ document.addEventListener('keydown', e => {
 buildSidebar();
 updateStatusBar();
 updateSendBtn();
-updateRecordBtn();
 
 // ══════════════════════════════════════════════════════════ TOAST ══
 let _toastTimer = null;

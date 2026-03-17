@@ -38,6 +38,9 @@ ENDPOINTS
     POST /send-fish     → save PNG + audio, fire OSC
     GET  /get-fish      → JSON: {1: <base64 png>, 2: …}  for pond display
     DEL  /remove-fish/<n> → delete fish n from disk + notify pond display
+    POST /clear-pond    → remove all fish from pond + fire /ponder/clear OSC
+    POST /sensor        → receive water level sensor value from MaxPatch
+    GET  /sensor        → get current sensor value (pond display polls this)
 
 ══════════════════════════════════════════════════════════════════════
 """
@@ -61,6 +64,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 app = Flask(__name__, static_folder=STATIC_DIR)
 osc = udp_client.SimpleUDPClient(OSC_IP, OSC_PORT)
 fish_timestamps = {}  # fish_id -> unix timestamp when sent
+sensor_value = {"value": 0}  # water level sensor value from Arduino
 
 # ── routes ────────────────────────────────────────────────────────────────────
 
@@ -74,6 +78,24 @@ def drawing_app():
 def pond_bg():
     """Serve the watercolour pond background image."""
     return send_from_directory(STATIC_DIR, "pond_bg.png")
+
+
+@app.route("/ripples.png")
+def ripples():
+    """Serve the ripples image."""
+    return send_from_directory(STATIC_DIR, "ripples.png")
+
+
+@app.route("/lillypad.png")
+def lillypad():
+    """Serve the lillypad image."""
+    return send_from_directory(STATIC_DIR, "lillypad.png")
+
+
+@app.route("/lillypadwlilly.png")
+def lillypad_with_lilly():
+    """Serve the lillypad with lilly image."""
+    return send_from_directory(STATIC_DIR, "lillypadwlilly.png")
 
 
 @app.route("/pond")
@@ -172,6 +194,49 @@ def remove_fish(fish_id):
     print(f"[osc]    /ponder/remove  {fish_id}")
 
     return jsonify({"ok": True, "fish": fish_id, "removed": removed})
+
+
+@app.route("/clear-pond", methods=["POST"])
+def clear_pond():
+    """
+    Remove all fish from the pond (delete all fish files and notify displays).
+    Called when user clicks "new pond" button.
+    """
+    removed = []
+    for i in range(1, 9):
+        for ext in ("png", "webm"):
+            path = os.path.join(OUTPUT_DIR, f"fish{i}.{ext}")
+            if os.path.exists(path):
+                os.remove(path)
+                removed.append(path)
+                print(f"[removed] {path}")
+
+    fish_timestamps.clear()
+    osc.send_message("/ponder/clear", [])
+    print(f"[osc]    /ponder/clear  → {OSC_IP}:{OSC_PORT}")
+
+    return jsonify({"ok": True, "removed": removed})
+
+
+@app.route("/sensor", methods=["POST"])
+def set_sensor():
+    """
+    Receive water level sensor value from MaxPatch or Arduino.
+    Expected JSON body: { "value": 300 }
+    """
+    data = request.get_json(force=True)
+    sensor_value["value"] = int(data.get("value", 0))
+    print(f"[sensor] water level: {sensor_value['value']}")
+    return jsonify({"ok": True, "value": sensor_value["value"]})
+
+
+@app.route("/sensor", methods=["GET"])
+def get_sensor():
+    """
+    Return current water level sensor value.
+    Response: { "value": 300 }
+    """
+    return jsonify(sensor_value)
 
 
 # ── entry point ───────────────────────────────────────────────────────────────

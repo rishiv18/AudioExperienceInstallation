@@ -5,9 +5,14 @@
 <title>Ponder — Fish Pond</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width:100%; height:100%; background:#0a2a38; overflow:hidden; }
+  html, body {
+    width: 1600px;
+    height: 900px;
+    background: #0a2a38;
+    overflow: hidden;
+  }
 
-  #pond { display:block; position:fixed; top:0; left:0; width:1600px; height:900px; }
+  #pond { display:block; width:1600px; height:900px; }
 
   #waiting {
     position:fixed; top:50%; left:50%;
@@ -50,14 +55,20 @@ const W           = 1600;
 const H           = 900;
 const MAX_FISH    = 8;
 const POLL_MS     = 1500;   // check server every 1.5s
-const RECORD_SECS = 8;      // fish appears 8s after it was sent
+const SENSOR_POLL_MS = 200; // check sensor every 200ms for responsiveness
+const ENTRY_DELAY = 12;     // fish appears 12s after sent (4s countdown + 8s timer)
 const SERVER      = '';     // same origin — served by server.py
+const SENSOR_THRESHOLD = 300;  // sensor value above this speeds up fish
+const SPEED_MULTIPLIER = 2.0;  // 200% speed when sensor triggered
+
+// Current speed multiplier (1.0 = normal, 2.0 = 200% speed)
+let currentSpeedMultiplier = 1.0;
 
 // Oval swimming path (centre + radii)
 const PATH_CX = W * 0.50;
 const PATH_CY = H * 0.50;
-const PATH_RX = W * 0.36;
-const PATH_RY = H * 0.30;
+const PATH_RX = W * 0.45;
+const PATH_RY = H * 0.42;
 
 // ══════════════════════════════════════════════════ CANVAS ══
 const canvas = document.getElementById('pond');
@@ -72,69 +83,236 @@ bgImg.onload = () => { bgLoaded = true; };
 // ══════════════════════════════════════════════════ RIPPLES ══
 class Ripple {
   constructor(x, y) {
-    this.x = x; this.y = y; this.r = 0;
-    this.max = 30 + Math.random() * 75;
+    this.x = x;
+    this.y = y;
+    this.rings = [];
+    // Create multiple rings that expand outward with large delays
+    for (let i = 0; i < 3; i++) {
+      // Generate random arc segments (incomplete circles)
+      const arcs = [];
+      let angle = Math.random() * Math.PI * 2;
+      const numArcs = 2 + Math.floor(Math.random() * 3);  // 2-4 arcs per ring
+      for (let a = 0; a < numArcs; a++) {
+        const arcLength = 0.4 + Math.random() * 0.8;  // arc spans 0.4-1.2 radians
+        const gapLength = 0.3 + Math.random() * 0.6;  // gap spans 0.3-0.9 radians
+        arcs.push({ start: angle, end: angle + arcLength });
+        angle += arcLength + gapLength;
+      }
+
+      this.rings.push({
+        radius: 5,
+        maxRadius: 150 + Math.random() * 60,
+        alpha: 0.6,
+        delay: i * 60,  // large stagger between rings
+        started: false,
+        arcs: arcs
+      });
+    }
+    this.frame = 0;
   }
-  get alive() { return this.r < this.max; }
-  update() { this.r += 0.44; }
+
+  get alive() {
+    return this.rings.some(r => r.alpha > 0.01);
+  }
+
+  update() {
+    this.frame++;
+    for (const ring of this.rings) {
+      if (this.frame >= ring.delay) {
+        ring.started = true;
+      }
+      if (ring.started && ring.alpha > 0) {
+        ring.radius += 0.25;  // very slow expansion
+        // Fade out very slowly as it expands
+        const progress = ring.radius / ring.maxRadius;
+        ring.alpha = Math.max(0, (1 - progress * progress * progress) * 0.6);
+      }
+    }
+  }
+
   draw(ctx) {
-    const t = this.r / this.max;
-    const a = (1 - t) * 0.40;
     ctx.save();
-    ctx.globalCompositeOperation = 'screen';
-    ctx.strokeStyle = `rgba(160,220,235,${a})`;
-    ctx.lineWidth   = 1;
-    ctx.beginPath();
-    ctx.ellipse(this.x, this.y, this.r, this.r * 0.36, 0, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+
+    for (const ring of this.rings) {
+      if (!ring.started || ring.alpha <= 0) continue;
+
+      ctx.globalAlpha = ring.alpha;
+
+      // Draw incomplete circular arcs
+      for (const arc of ring.arcs) {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, ring.radius, arc.start, arc.end);
+        ctx.stroke();
+      }
+    }
     ctx.restore();
   }
 }
 
-const ripples   = [];
-let   ambientT  = 0;
+const ripples = [];
 
 function spawnRipple(x, y) {
-  ripples.push(new Ripple(
-    x !== undefined ? x : 80  + Math.random() * (W - 160),
-    y !== undefined ? y : 80  + Math.random() * (H - 160)
-  ));
+  ripples.push(new Ripple(x, y));
 }
 
+// ══════════════════════════════════════════════════ LILLYPADS ══
+const lillypadImg = new Image();
+lillypadImg.src = `${SERVER}/lillypad.png`;
+let lillypadImgLoaded = false;
+lillypadImg.onload = () => { lillypadImgLoaded = true; };
+
+const lillypadWithLillyImg = new Image();
+lillypadWithLillyImg.src = `${SERVER}/lillypadwlilly.png`;
+let lillypadWithLillyImgLoaded = false;
+lillypadWithLillyImg.onload = () => { lillypadWithLillyImgLoaded = true; };
+
+class Lillypad {
+  constructor(x, y, hasLilly) {
+    this.x = x;
+    this.y = y;
+    this.hasLilly = hasLilly;
+    this.scale = 0.15 + Math.random() * 0.1;
+    this.rotation = Math.random() * Math.PI * 2;
+
+    // Barely noticeable drift parameters
+    this.driftAngle = Math.random() * Math.PI * 2;
+    this.driftSpeed = 0.008 + Math.random() * 0.005;  // barely noticeable
+    this.driftChangeRate = 0.0003 + Math.random() * 0.0002;
+
+    // Very gentle bobbing
+    this.bobOffset = Math.random() * Math.PI * 2;
+    this.bobSpeed = 0.005 + Math.random() * 0.003;
+
+    // Very slow rotation drift
+    this.rotationSpeed = (Math.random() - 0.5) * 0.0004;
+  }
+
+  update() {
+    // Drift slowly
+    this.x += Math.cos(this.driftAngle) * this.driftSpeed;
+    this.y += Math.sin(this.driftAngle) * this.driftSpeed;
+
+    // Gradually change drift direction
+    this.driftAngle += (Math.random() - 0.5) * this.driftChangeRate;
+
+    // Slow rotation
+    this.rotation += this.rotationSpeed;
+
+    // Bobbing animation
+    this.bobOffset += this.bobSpeed;
+
+    // Wrap around edges with padding
+    const pad = 100;
+    if (this.x < -pad) this.x = W + pad;
+    if (this.x > W + pad) this.x = -pad;
+    if (this.y < -pad) this.y = H + pad;
+    if (this.y > H + pad) this.y = -pad;
+  }
+
+  draw(ctx) {
+    const img = this.hasLilly ? lillypadWithLillyImg : lillypadImg;
+    const loaded = this.hasLilly ? lillypadWithLillyImgLoaded : lillypadImgLoaded;
+    if (!loaded) return;
+
+    const bob = Math.sin(this.bobOffset) * 2;
+    const size = img.width * this.scale;
+
+    ctx.save();
+    ctx.translate(this.x, this.y + bob);
+    ctx.rotate(this.rotation);
+    ctx.drawImage(img, -size / 2, -size / 2, size, size);
+    ctx.restore();
+  }
+}
+
+// Create lillypads at various positions
+const lillypads = [
+  new Lillypad(120, 150, false),
+  new Lillypad(1450, 200, true),
+  new Lillypad(200, 750, true),
+  new Lillypad(1380, 720, false),
+  new Lillypad(80, 450, false),
+  new Lillypad(1520, 480, true),
+];
+
 // ══════════════════════════════════════════════════ KOI FISH SPRITE ══
+// All fish follow the same oval path, entering from the top edge.
+// Each full rotation takes exactly 8 seconds using time-based animation.
+// All fish share the same rotation cycle so new fish enter when school is at top.
+const ROTATION_SECS = 8;
+const STAGGER_ANGLE = 5 * Math.PI / 180;  // 5° offset between each fish
+const STAGGER_INWARD = 70;  // pixels inward per fish
+
+// Global rotation tracking - all fish sync to this
+let globalRotationStart = null;
+let lastUpdateTime = null;
+let virtualElapsed = 0;  // tracks "virtual" time that can speed up
+
+function getGlobalRotationStart() {
+  if (globalRotationStart === null) {
+    globalRotationStart = performance.now();
+    lastUpdateTime = globalRotationStart;
+  }
+  return globalRotationStart;
+}
+
+function updateVirtualTime(timestamp) {
+  if (lastUpdateTime === null) {
+    lastUpdateTime = timestamp;
+    return;
+  }
+  const delta = (timestamp - lastUpdateTime) / 1000;
+  virtualElapsed += delta * currentSpeedMultiplier;
+  lastUpdateTime = timestamp;
+}
+
+function getVirtualElapsed() {
+  return virtualElapsed;
+}
+
 class KoiFish {
   constructor(fishId, img) {
     this.id  = fishId;
     this.img = img;
 
-    // Scale to display size — vary slightly per fish for natural feel
-    const targetW = 150 + (fishId % 4) * 18;
+    // Scale to display size — vary slightly per fish for natural feel (20% larger)
+    const targetW = 180 + (fishId % 4) * 22;
     this.dw = targetW;
     this.dh = Math.round(img.naturalHeight * (targetW / img.naturalWidth));
 
-    // Each fish swims on a slightly different oval so they don't stack
-    const jitter = (fishId - 1) * 0.12;    // spreads fish around oval
-    this.cx  = PATH_CX + Math.cos(fishId * 1.3) * 25;
-    this.cy  = PATH_CY + Math.sin(fishId * 0.9) * 18;
-    this.rx  = PATH_RX - fishId * 8;
-    this.ry  = PATH_RY - fishId * 5;
+    // All fish swim on the same oval path, staggered inward so they don't overlap
+    this.cx  = PATH_CX;
+    this.cy  = PATH_CY;
+    this.rx  = PATH_RX - (fishId - 1) * STAGGER_INWARD;
+    this.ry  = PATH_RY - (fishId - 1) * (STAGGER_INWARD * 0.6);
 
-    // Start angle: top-left of oval (5π/4) so fish enters from that corner
-    this.angle = Math.PI * 1.25 + jitter;
-    this.speed = 0.0025 + (fishId % 3) * 0.0006;  // gracefully slow
+    // Stagger angle offset (inward fish slightly behind)
+    this.staggerOffset = (fishId - 1) * STAGGER_ANGLE;
+    this.angle = -Math.PI / 2;
 
-    // Body undulation
+    // Body undulation (wiggle effect)
     this.wobble = 0;
-    this.wobSpd = 0.085 + Math.random() * 0.025;
-    this.wobAmp = 5.5 + Math.random() * 2.5;   // pixel offset per strip
-    this.STRIPS = 16;                            // vertical slice count
+    this.wobSpd = 0.06 + Math.random() * 0.02;  // slower, gentler wobble
+    this.wobAmpBase = 8 + Math.random() * 3;  // base amplitude (larger wiggle)
+    this.wobAmp = this.wobAmpBase;
+    this.STRIPS = 16;
+
+    // Wiggle/glide cycle for serene movement - randomized per fish
+    this.isGliding = Math.random() > 0.5;  // randomly start wiggling or gliding
+    this.phaseTimer = Math.random() * 180;  // random point in current phase
+    this.wiggleDuration = 80 + Math.random() * 100;   // wiggle for ~1.3-3 seconds
+    this.glideDuration = 100 + Math.random() * 120;   // glide for ~1.7-3.7 seconds
+
+    // Speed variation for natural movement
+    this.moveSpeed = 1.0;  // current speed multiplier (slower when wiggling, faster when gliding)
+    this.angleOffset = 0;  // accumulated offset from speed variations
 
     // Fade in from 0→1
     this.alpha    = 0;
     this.fadingIn = true;
-
-    // Ripple spawning
-    this.rippleT = 40 + Math.floor(Math.random() * 80);
 
     this._updatePos();
   }
@@ -151,21 +329,47 @@ class KoiFish {
     return Math.atan2(dy, dx);
   }
 
-  update() {
+  update(timestamp) {
     if (this.fadingIn) {
       this.alpha += 0.012;
       if (this.alpha >= 1) { this.alpha = 1; this.fadingIn = false; }
     }
-    this.angle  += this.speed;
-    this.wobble += this.wobSpd;
-    this._updatePos();
 
-    // Spawn gentle ripples as fish moves
-    this.rippleT--;
-    if (this.rippleT <= 0) {
-      spawnRipple(this.x, this.y);
-      this.rippleT = 55 + Math.floor(Math.random() * 85);
+    // Time-based rotation synced to global cycle: 8 seconds per full rotation
+    // Uses virtual elapsed time which can speed up based on sensor
+    const virtualTime = getVirtualElapsed();
+    const baseAngle = -Math.PI / 2 + (virtualTime / ROTATION_SECS) * (2 * Math.PI);
+    this.angle = baseAngle - this.staggerOffset + this.angleOffset;
+
+    // Wiggle/glide phase cycle
+    this.phaseTimer += currentSpeedMultiplier;
+    const targetSpeed = this.isGliding ? 1.15 : 0.85;  // glide faster, wiggle slower
+    this.moveSpeed += (targetSpeed - this.moveSpeed) * 0.03;  // smooth transition
+
+    if (this.isGliding) {
+      // Gliding phase - smoothly reduce wobble amplitude
+      this.wobAmp = Math.max(0.5, this.wobAmp * 0.96);
+      if (this.phaseTimer >= this.glideDuration) {
+        this.isGliding = false;
+        this.phaseTimer = 0;
+      }
+    } else {
+      // Wiggling phase - smoothly restore wobble amplitude
+      this.wobAmp = this.wobAmp + (this.wobAmpBase - this.wobAmp) * 0.05;
+      if (this.phaseTimer >= this.wiggleDuration) {
+        this.isGliding = true;
+        this.phaseTimer = 0;
+      }
     }
+
+    // Accumulate speed offset for natural catch-up behavior
+    const baseSpeed = (2 * Math.PI) / (ROTATION_SECS * 60);  // radians per frame at 60fps
+    this.angleOffset += (this.moveSpeed - 1.0) * baseSpeed * currentSpeedMultiplier;
+
+    // Body undulation (wiggle effect) - gentler and calmer
+    this.wobble += this.wobSpd * currentSpeedMultiplier;
+
+    this._updatePos();
   }
 
   draw(ctx) {
@@ -216,12 +420,24 @@ function loadFishPNG(fishId, base64, showAt) {
   img.src = 'data:image/png;base64,' + base64;
 }
 
-function checkPending() {
+function isSchoolAtTop(timestamp) {
+  if (globalRotationStart === null) return true;  // First fish can enter immediately
+  const globalElapsed = (timestamp - getGlobalRotationStart()) / 1000;
+  const cycleProgress = (globalElapsed % ROTATION_SECS) / ROTATION_SECS;  // 0 to 1
+  // School is at top when cycleProgress is near 0 (within first 5% of cycle)
+  return cycleProgress < 0.05 || cycleProgress > 0.95;
+}
+
+function checkPending(timestamp) {
   const now = Date.now();
   for (const [id, entry] of Object.entries(fishPending)) {
-    if (now >= entry.showAt) {
-      fishSprites[id] = new KoiFish(parseInt(id), entry.img);
+    // Fish must wait for entry delay AND for school to be at top
+    if (now >= entry.showAt && isSchoolAtTop(timestamp)) {
+      const fish = new KoiFish(parseInt(id), entry.img);
+      fishSprites[id] = fish;
       delete fishPending[id];
+      // Spawn ripple at fish entry position (top of its oval path)
+      spawnRipple(fish.cx, fish.cy - fish.ry);
       updateUI();
       console.log(`[pond] fish ${id} entered the pond`);
     }
@@ -236,6 +452,25 @@ function updateUI() {
   document.getElementById('waiting').classList.toggle('hidden', anyFish);
 }
 
+// ══════════════════════════════════════════════════ SENSOR POLLING ══
+async function pollSensor() {
+  try {
+    const resp = await fetch(`${SERVER}/sensor`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const sensorValue = data.value || 0;
+
+    // Speed up fish when sensor value exceeds threshold
+    if (sensorValue > SENSOR_THRESHOLD) {
+      currentSpeedMultiplier = SPEED_MULTIPLIER;
+    } else {
+      currentSpeedMultiplier = 1.0;
+    }
+  } catch (e) {
+    // Sensor not available — keep normal speed
+  }
+}
+
 // ══════════════════════════════════════════════════ SERVER POLLING ══
 async function pollServer() {
   try {
@@ -243,7 +478,20 @@ async function pollServer() {
     if (!resp.ok) return;
     const data = await resp.json();
     const nowMs = Date.now();
+    const serverIds = new Set(Object.keys(data).map(id => parseInt(id)));
 
+    // Remove fish that no longer exist on server
+    for (const id of loadedIds) {
+      if (!serverIds.has(id)) {
+        delete fishSprites[id];
+        delete fishPending[id];
+        loadedIds.delete(id);
+        console.log(`[pond] fish ${id} removed from pond`);
+        updateUI();
+      }
+    }
+
+    // Add new fish from server
     for (const [idStr, entry] of Object.entries(data)) {
       const fishId = parseInt(idStr);
       if (loadedIds.has(fishId)) continue;
@@ -252,7 +500,7 @@ async function pollServer() {
       // entry is { png: "base64...", timestamp: 1234567890.123 }
       const png      = entry.png      || entry;   // backwards compat if plain string
       const sentMs   = entry.timestamp ? entry.timestamp * 1000 : nowMs;
-      const showAt   = sentMs + RECORD_SECS * 1000;
+      const showAt   = sentMs + ENTRY_DELAY * 1000;
       const waitSecs = Math.max(0, (showAt - nowMs) / 1000).toFixed(1);
 
       console.log(`[pond] fish ${fishId} queued — appears in ${waitSecs}s`);
@@ -265,10 +513,12 @@ async function pollServer() {
 }
 
 // ══════════════════════════════════════════════════ MAIN LOOP ══
-let lastAmbientRipple = 0;
-
 function loop(ts) {
   requestAnimationFrame(loop);
+
+  // Update virtual time (handles speed multiplier)
+  getGlobalRotationStart();  // ensure initialized
+  updateVirtualTime(ts);
 
   // ── Background ─────────────────────────────────────────────────────
   if (bgLoaded) {
@@ -281,12 +531,6 @@ function loop(ts) {
     ctx.fillRect(0, 0, W, H);
   }
 
-  // ── Ambient ripples ──────────────────────────────────────────────────
-  if (ts - lastAmbientRipple > 2200 + Math.random() * 2400) {
-    spawnRipple();
-    lastAmbientRipple = ts;
-  }
-
   // ── Ripples ──────────────────────────────────────────────────────────
   for (let i = ripples.length - 1; i >= 0; i--) {
     ripples[i].update();
@@ -295,12 +539,18 @@ function loop(ts) {
   }
 
   // ── Check pending fish ready to enter ───────────────────────────────
-  checkPending();
+  checkPending(ts);
 
   // ── Fish ──────────────────────────────────────────────────────────────
   for (const fish of Object.values(fishSprites)) {
-    fish.update();
+    fish.update(ts);
     fish.draw(ctx);
+  }
+
+  // ── Lillypads ────────────────────────────────────────────────────────
+  for (const pad of lillypads) {
+    pad.update();
+    pad.draw(ctx);
   }
 }
 
@@ -331,7 +581,9 @@ document.addEventListener('keydown', e => {
 
 // ══════════════════════════════════════════════════ INIT ══
 setInterval(pollServer, POLL_MS);
+setInterval(pollSensor, SENSOR_POLL_MS);
 pollServer();
+pollSensor();
 requestAnimationFrame(loop);
 </script>
 </body>
