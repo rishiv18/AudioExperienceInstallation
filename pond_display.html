@@ -6,13 +6,13 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
-    width: 1600px;
+    width: 1300px;
     height: 900px;
     background: #0a2a38;
     overflow: hidden;
   }
 
-  #pond { display:block; width:1600px; height:900px; }
+  #pond { display:block; width:1300px; height:900px; }
 
   #waiting {
     position:fixed; top:50%; left:50%;
@@ -43,7 +43,7 @@
 </style>
 </head>
 <body>
-<canvas id="pond" width="1600" height="900"></canvas>
+<canvas id="pond" width="1200" height="900"></canvas>
 <div id="waiting"><h1>ponder</h1><p>draw a fish to begin</p></div>
 <div id="counter">0 / 8 fish</div>
 
@@ -51,7 +51,7 @@
 'use strict';
 
 // ══════════════════════════════════════════════════ CONFIG ══
-const W           = 1600;
+const W           = 1200;
 const H           = 900;
 const MAX_FISH    = 8;
 const POLL_MS     = 1500;   // check server every 1.5s
